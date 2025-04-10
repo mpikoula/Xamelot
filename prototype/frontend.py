@@ -3,6 +3,9 @@ import json
 import os
 import requests
 
+import matplotlib
+matplotlib.use('Agg')  # Set a non-GUI backend
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -38,14 +41,18 @@ GRID_POINT = 20
 #######################
 
 def _plot_to_html_(fig, style=""):
-    """
-        Turn a Matplotlib figure into HTML.
-    """
+    """Helper function to convert matplotlib figure to HTML"""
     tmpfile = BytesIO()
-    fig.savefig(tmpfile, format='png', bbox_inches = 'tight' , dpi = 60)
-    output = base64.b64encode(tmpfile.getvalue()).decode('utf-8')
-
-    return "<img src=\'data:image/png;base64,{0}\' style=\'margin:auto;display:block;{1}\'>".format(output, style)
+    try:
+        fig.savefig(tmpfile, format='png', bbox_inches='tight', dpi=100)
+        encoded = base64.b64encode(tmpfile.getvalue()).decode('utf-8')
+        plt.close(fig)  # Close the figure to free memory
+        return f'<img src=\'data:image/png;base64,{encoded}\' style=\'{style}\'>'
+    except Exception as e:
+        plt.close(fig)  # Make sure to close the figure even if saving fails
+        return f'<div>Error generating plot: {str(e)}</div>'
+    finally:
+        tmpfile.close()
 
 def _dict_to_html_table_(
         d,
@@ -199,7 +206,7 @@ def main():
     # Send offer button
     html_page += """
         <div style="text-align:center">
-        <a href="http://localhost:5000/send?offer={0}">
+        <a href="http://localhost:5002/send?offer={0}">
             <button>
                 Send offer
             </button>
@@ -312,13 +319,17 @@ def display_results():
             <ul>"""
 
             score = results_graft["score"]
-            if 365 * float(year) < float(offer["gsurv"]):
-                status = "functioning"
-            else:
-                if offer["gcens"] == "Graft failure":
-                    status = "failed"
+            try:
+                if 365 * float(year) < float(offer.get("gsurv", 0)):
+                    status = "functioning"
                 else:
-                    status = "unknown"
+                    if offer.get("gcens") == "Graft failure":
+                        status = "failed"
+                    else:
+                        status = "unknown"
+            except (ValueError, TypeError):
+                status = "unknown"
+
             html_page += """
                 <li>
                     {0}: at year {2}, the graft is {3}.
@@ -332,13 +343,17 @@ def display_results():
             )
 
             score = results_patient["score"]
-            if 365 * float(year) < float(offer["psurv"]):
-                status = "alive"
-            else:
-                if offer["pcens"] == "Death of recipient":
-                    status = "dead"
+            try:
+                if 365 * float(year) < float(offer.get("psurv", 0)):
+                    status = "alive"
                 else:
-                    status = "unknown"
+                    if offer.get("pcens") == "Death of recipient":
+                        status = "dead"
+                    else:
+                        status = "unknown"
+            except (ValueError, TypeError):
+                status = "unknown"
+
             html_page += """
                 <li>
                     {0}: at year {2}, the patient is {3}.
