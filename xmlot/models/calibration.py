@@ -16,6 +16,7 @@ import numpy as np
 
 def survival_calibration(data, predictions, xcens, xsurv, events=[1.], censored=0., years=(1, 5, 10)):
     results = dict()
+    
     for year_idx, year in enumerate(years):
         results[year] = dict()
 
@@ -27,7 +28,7 @@ def survival_calibration(data, predictions, xcens, xsurv, events=[1.], censored=
                 xcens, 
                 xsurv,
                 events,
-                censored
+                censored=censored
             )}
         )
 
@@ -88,9 +89,14 @@ class CalibratedSurvivalModel(FromTheShelfModel):
         )
 
     def fit(self, data_train, parameters=None):
+        
+        # Handle the case where parameters might be None
+        if parameters is None:
+            parameters = {}
+    
         accessor = getattr(data_train, self.m_accessor_code)
         predictions = self.m_model.predict(accessor.features)[0]
-
+    
         results = survival_calibration(
             data_train,
             predictions,
@@ -98,25 +104,37 @@ class CalibratedSurvivalModel(FromTheShelfModel):
             xsurv=accessor.duration,
             years=self.m_years
         )
-
-        # Aggregate all results in a same container
+    
+        # Aggregate all results in the same container
         p = list()  # probabilities on x-axis
         t = list()  # true ratios on y-axis
         for year in self.m_years:
             p += results[year]["pred"]
             t += results[year]["true"]
+    
+        # Avoid division by zero by replacing zero values in t with a small epsilon value
+        epsilon = parameters.get("epsilon", 1e-3)  # Use .get() to avoid key errors
+    
+        # Avoid division by zero in the transformation
+        t = np.array(t)
+        
+        t = np.maximum(t, epsilon)  # Replace zeros with epsilon (small positive number)
+
+        # Perform the transformation
+        t = (1 / t) - 1
+        t = np.maximum(t, epsilon)  # Ensure no negative or zero values
+    
+        p = np.array(p)
 
         # Fit sigmoid
-        epsilon = parameters["epsilon"] if "epsilon" in parameters.keys() else 1e-5
-
-        p = np.array(p)
-        t = (1 / np.array(t)) - 1
-        t = np.maximum(t, epsilon)
-        t = np.log(t)
-
-        self.m_calibrator.fit(p.reshape(-1, 1), t.reshape(-1, 1))
+        self.m_calibrator.fit(p.reshape(-1, 1), np.log(t).reshape(-1, 1))  # Log-transform t
 
     def predict(self, x, parameters=None):
+
+        # Handle the case where parameters might be None
+        if parameters is None:
+            parameters = {}
+            
         prediction = self.m_model.predict(x)[0]
         prediction = prediction.apply_(lambda p: self.m_calibrator.predict([[p]])[0, 0])
         return 1 / (1 + np.exp(prediction))
