@@ -198,9 +198,3 @@ for subgroup in df[subgroup_columns].drop_duplicates().values:
     mask = (df[subgroup_columns] == subgroup).all(axis=1)
     print(f"{subgroup}: {mask.sum()} samples")
 ```
-
-### Conclusion
-
-The weighted DeepHit implementation provides a robust solution for addressing fairness issues in survival analysis. By giving higher importance to underrepresented subgroups during model training, it should lead to more equitable predictions across all patient groups.
-
-The implementation is production-ready, thoroughly tested, and maintains full backward compatibility with existing code.
