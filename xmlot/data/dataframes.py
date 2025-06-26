@@ -97,6 +97,100 @@ def build_survival_accessor(event, duration, accessor_code="surv", exceptions=tu
     return SurvivalAccessor
 
 
+def build_weighted_survival_accessor(event, duration, weight_column="sample_weights", accessor_code="surv", exceptions=tuple(), disable_warning=True):
+    """
+    Build an accessor dedicated to the management of survival data with sample weights.
+
+    Args:
+        - event           : event name;
+        - duration        : duration name;
+        - weight_column   : name of the weight column;
+        - accessor_code   : code to access extended properties (for example: `df.surv.event`);
+        - exceptions      : columns to exclude from features;
+        - disable_warning : remove warnings linked to several uses of that function.
+
+    Returns: the corresponding accessor class;
+             instances are built when called from the DataFrame (for example: `df.surv`)
+    """
+    context_manager = catch_warnings() if disable_warning else nullcontext()
+    with context_manager:
+        if disable_warning:
+            simplefilter("ignore")
+
+        @pd.api.extensions.register_dataframe_accessor(accessor_code)
+        class WeightedSurvivalAccessor:
+            def __init__(self, pandas_obj):
+                self._validate(pandas_obj)
+                self._obj = pandas_obj
+
+                self.m_event          = event
+                self.m_duration       = duration
+                self.m_weight_column  = weight_column
+                self.m_stratification = event
+                self.m_exceptions     = exceptions
+
+            @staticmethod
+            def _validate(obj):
+                pass
+                # # verify there is a column latitude and a column longitude
+                # if event not in obj.columns or duration not in obj.columns:
+                #     raise AttributeError("Must have {0} and {1}.".format(event, duration))
+
+            @property
+            def event(self):
+                return self.m_event
+
+            @property
+            def events(self):
+                return self._obj[self.event]
+
+            @property
+            def duration(self):
+                return self.m_duration
+
+            @property
+            def durations(self):
+                return self._obj[self.duration]
+
+            @property
+            def weights(self):
+                """Get sample weights if available."""
+                if self.m_weight_column in self._obj.columns:
+                    return self._obj[self.m_weight_column]
+                else:
+                    return None
+
+            @property
+            def target(self):
+                return [self.event, self.duration]
+
+            @property
+            def targets(self):
+                return self._obj[self.target]
+
+            @property
+            def features_list(self):
+                # Exclude weight column from features
+                all_exceptions = list(self.m_exceptions) + [self.m_weight_column]
+                return difference(self._obj.columns, union(self.target, all_exceptions))
+
+            @property
+            def features(self):
+                return self._obj[self.features_list]
+
+            @property
+            def stratification_target(self):
+                return self.m_stratification
+
+            @property
+            def df(self):
+                # Exclude weight column from df, just like features
+                all_exceptions = list(self.m_exceptions) + [self.m_weight_column]
+                return self._obj.drop(columns=all_exceptions, errors="ignore")
+
+    return WeightedSurvivalAccessor
+
+
 def build_classification_accessor(target, accessor_code="class", exceptions=(), disable_warning=True):
     """
     Build an accessor dedicated to the management of data for classification.
