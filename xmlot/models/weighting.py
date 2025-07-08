@@ -14,6 +14,7 @@ def compute_subgroup_weights(
     weight_strategy: str = "inverse_frequency",
     min_weight: float = 0.1,
     max_weight: float = 10.0,
+    normalize_mean: bool = True,
     **kwargs
 ) -> np.ndarray:
     """
@@ -28,6 +29,7 @@ def compute_subgroup_weights(
             - "custom": Use custom weights provided in kwargs
         min_weight: Minimum weight to assign (prevents extreme weights)
         max_weight: Maximum weight to assign (prevents extreme weights)
+        normalize_mean: If True, normalize weights so mean=1.0 (prevents learning rate reduction)
         **kwargs: Additional arguments for custom weight strategies
         
     Returns:
@@ -40,19 +42,30 @@ def compute_subgroup_weights(
     subgroup_id = df[subgroup_columns].astype(str).agg('_'.join, axis=1)
     
     if weight_strategy == "inverse_frequency":
-        return _compute_inverse_frequency_weights(
+        weights = _compute_inverse_frequency_weights(
             subgroup_id, min_weight, max_weight
         )
     elif weight_strategy == "balanced":
-        return _compute_balanced_weights(
+        weights = _compute_balanced_weights(
             subgroup_id, min_weight, max_weight
         )
     elif weight_strategy == "custom":
-        return _compute_custom_weights(
+        weights = _compute_custom_weights(
             subgroup_id, kwargs.get("custom_weights", {}), min_weight, max_weight
         )
     else:
         raise ValueError(f"Unknown weight_strategy: {weight_strategy}")
+    
+    # Normalize weights to have mean=1.0 if requested
+    if normalize_mean:
+        weights = weights / weights.mean()
+        # Re-clip after normalization to ensure bounds are respected
+        weights = np.clip(weights, min_weight, max_weight)
+        # Re-normalize if clipping changed the mean significantly
+        if abs(weights.mean() - 1.0) > 0.01:
+            weights = weights / weights.mean()
+    
+    return weights
 
 
 def _compute_inverse_frequency_weights(
@@ -73,11 +86,11 @@ def _compute_inverse_frequency_weights(
         mask = subgroup_id == subgroup
         weights[mask] = total_samples / count
     
-    # Normalize weights
-    weights = weights / weights.mean()
-    
-    # Clip weights to specified range
+    # Clip weights to specified range BEFORE normalization
     weights = np.clip(weights, min_weight, max_weight)
+    
+    # Normalize weights to have mean=1.0
+    weights = weights / weights.mean()
     
     return weights
 
@@ -100,11 +113,11 @@ def _compute_balanced_weights(
         mask = subgroup_id == subgroup
         weights[mask] = max_count / count
     
-    # Normalize weights
-    weights = weights / weights.mean()
-    
-    # Clip weights to specified range
+    # Clip weights to specified range BEFORE normalization
     weights = np.clip(weights, min_weight, max_weight)
+    
+    # Normalize weights to have mean=1.0
+    weights = weights / weights.mean()
     
     return weights
 
@@ -124,11 +137,11 @@ def _compute_custom_weights(
         mask = subgroup_id == subgroup
         weights[mask] = weight
     
-    # Normalize weights
-    weights = weights / weights.mean()
-    
-    # Clip weights to specified range
+    # Clip weights to specified range BEFORE normalization
     weights = np.clip(weights, min_weight, max_weight)
+    
+    # Normalize weights to have mean=1.0
+    weights = weights / weights.mean()
     
     return weights
 
@@ -140,6 +153,7 @@ def compute_survival_weights(
     subgroup_columns: Optional[List[str]] = None,
     weight_strategy: str = "inverse_frequency",
     time_bins: Optional[int] = None,
+    normalize_mean: bool = True,
     **kwargs
 ) -> np.ndarray:
     """
@@ -153,6 +167,7 @@ def compute_survival_weights(
         subgroup_columns: List of column names that define subgroups
         weight_strategy: Strategy for computing weights
         time_bins: Number of time bins for temporal weighting (optional)
+        normalize_mean: If True, normalize weights so mean=1.0 (prevents learning rate reduction)
         **kwargs: Additional arguments for weight computation
         
     Returns:
@@ -161,7 +176,7 @@ def compute_survival_weights(
     # Start with subgroup weights
     if subgroup_columns:
         subgroup_weights = compute_subgroup_weights(
-            df, subgroup_columns, weight_strategy, **kwargs
+            df, subgroup_columns, weight_strategy, normalize_mean=False, **kwargs
         )
     else:
         subgroup_weights = np.ones(len(df))
@@ -172,8 +187,18 @@ def compute_survival_weights(
     # Combine weights
     combined_weights = subgroup_weights * event_weights
     
-    # Normalize final weights
-    combined_weights = combined_weights / combined_weights.mean()
+    # Normalize final weights to have mean=1.0 if requested
+    if normalize_mean:
+        combined_weights = combined_weights / combined_weights.mean()
+        
+        # Apply min/max bounds if provided
+        min_weight = kwargs.get('min_weight', 0.1)
+        max_weight = kwargs.get('max_weight', 10.0)
+        combined_weights = np.clip(combined_weights, min_weight, max_weight)
+        
+        # Re-normalize if clipping changed the mean significantly
+        if abs(combined_weights.mean() - 1.0) > 0.01:
+            combined_weights = combined_weights / combined_weights.mean()
     
     return combined_weights
 

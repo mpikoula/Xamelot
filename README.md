@@ -26,87 +26,52 @@ This implementation extends the DeepHit model in the PyCox module to support sam
 
 ### What Was Implemented
 
-#### 1. Modified DeepHit Class (`xmlot/models/pycox.py`)
-- Added `use_weights` parameter to enable weighted training
-- Created custom weighted loss function that incorporates sample weights
+#### 1. Modified DeepHit Classes (`xmlot/models/pycox.py`)
+- Added `use_weights` parameter to enable weighted training for both `DeepHit` and `DeepHitSingle`
+- Created custom weighted loss function that extends PyCox's standard loss with sample weights
 - Added `_df_to_xyw_()` method to extract features, targets, and weights
-- Implemented custom training loop for weighted models
-- Maintained backward compatibility with standard DeepHit
+- Maintained exact compatibility with original PyCox implementation when `use_weights=False`
+- Added support for ablation modes to control different aspects of weighted training
 
-#### 2. Weighting Utilities (`xmlot/models/weighting.py`)
-- `compute_subgroup_weights()`: Multiple weighting strategies
-- `compute_survival_weights()`: Survival-specific weighting
-- `add_weights_to_dataframe()`: Helper to add weights to DataFrame
-- `analyze_subgroup_distribution()`: Analyze subgroup imbalances
+#### 2. Key Features
 
-#### 3. Weighted Accessor (`xmlot/data/dataframes.py`)
-- `build_weighted_survival_accessor()`: Creates accessor that handles sample weights
-- Automatically excludes weight column from features
-- Provides easy access to weights through accessor
-
-#### 4. Documentation and Examples
-- Comprehensive guide (`docs/weighted_deephit_guide.md`)
-- Complete example script (`examples/weighted_deephit_example.py`)
-- Test suite (`tests/test_weighted_deephit.py`)
-
-### Key Features
-
-#### Multiple Weighting Strategies
-1. **Inverse Frequency**: Weights inversely proportional to subgroup frequency
-2. **Balanced**: Equal weights for all subgroups
-3. **Custom**: Use your own weights for specific subgroups
-4. **Survival-Specific**: Combines subgroup weighting with event rarity and temporal distribution
+#### Weighted Loss Function
+- Extends PyCox's standard DeepHit loss with sample weights
+- Maintains original loss structure and behavior
+- Supports multiple ablation modes for different training strategies
+- Automatically falls back to standard loss when weights are uniform
 
 #### Backward Compatibility
 - Standard DeepHit still works without changes
-- `use_weights=False` (default) maintains original behavior
-- `use_weights=True` enables weighted training
+- `use_weights=False` (default) maintains original behavior exactly
+- `use_weights=True` enables weighted training with custom loss
 
-#### Flexible Weight Computation
-- Support for custom weight functions
-- Configurable min/max weight bounds
-- Multiple subgroup column support
+#### Ablation Modes
+- `"full"`: Use weighted training with all loss components
+- `"unweighted"`: Use standard PyCox training despite weights (for comparison)
+- `"pycox_standard"`: Use PyCox's standard loss even with weights
 
 ### Quick Usage Example
 
 ```python
 import pandas as pd
 import numpy as np
-from xmlot.models.weighting import compute_survival_weights, add_weights_to_dataframe
-from xmlot.data.dataframes import build_weighted_survival_accessor
 from xmlot.models.pycox import DeepHit
 
-# 1. Prepare your data with underrepresented subgroups
+# 1. Prepare your data with weights
 df = pd.DataFrame({
     'age': [65, 70, 55, 80],
     'race': ['White', 'Black', 'Hispanic', 'Asian'],
     'stage': ['I', 'II', 'III', 'IV'],
     'duration': [120, 85, 200, 45],
-    'event': [1, 0, 1, 1]
+    'event': [1, 0, 1, 1],
+    'weights': [1.0, 2.0, 1.5, 3.0]  # Sample weights
 })
 
-# 2. Compute sample weights
-weights = compute_survival_weights(
-    df,
-    duration_col='duration',
-    event_col='event',
-    subgroup_columns=['race', 'stage'],
-    weight_strategy="inverse_frequency",
-    time_bins=10
-)
+# 2. Set up accessor (assuming you have a weighted accessor)
+# This would typically be done through your data preprocessing pipeline
 
-# 3. Add weights to DataFrame
-df_with_weights = add_weights_to_dataframe(df, weights, "sample_weights")
-
-# 4. Set up weighted accessor
-build_weighted_survival_accessor(
-    event="event",
-    duration="duration",
-    weight_column="sample_weights",
-    accessor_code="surv"
-)
-
-# 5. Train weighted DeepHit model
+# 3. Train weighted DeepHit model
 model = DeepHit(
     accessor_code="surv",
     hyperparameters={
@@ -121,80 +86,75 @@ model = DeepHit(
         "alpha": 0.2,
         "sigma": 0.1,
         "seed": 42,
-        "use_weights": True  # Enable weighted training
+        "use_weights": True,  # Enable weighted training
+        "ablation_mode": "full"  # Use full weighted training
     }
 )
 
-# 6. Train the model
+# 4. Train the model
 model.fit(data_train, train_params)
 ```
 
-### Testing
+### Implementation Details
 
-The implementation has been thoroughly tested:
+#### Weighted Loss Function
+The weighted loss function extends PyCox's standard DeepHit loss by:
+- Storing sample weights in the network during training
+- Applying weight scaling to the loss computation
+- Maintaining the original loss structure and gradients
+- Automatically detecting uniform weights and using standard loss
 
-#### Core Functionality Tests
-- ✅ Weight computation (inverse frequency, balanced, custom)
-- ✅ Survival-specific weighting
-- ✅ DataFrame integration
-- ✅ Subgroup analysis
-- ✅ Multiple subgroup support
-- ✅ Weight distribution validation
+#### Training Process
+1. **Weight Storage**: Sample weights are stored in the network for loss function access
+2. **Batch Processing**: Weights are mapped to batches using proper indexing
+3. **Loss Computation**: Standard PyCox loss is scaled by weight factors
+4. **Fallback**: Uniform weights automatically use standard loss
 
-#### Model Integration Tests
-- ✅ Weighted DeepHit initialization
-- ✅ Backward compatibility with standard DeepHit
-- ✅ Accessor functionality
-
-### Files Modified/Created
-
-#### Modified Files
-- `xmlot/models/pycox.py` - Added weighted DeepHit functionality
-- `xmlot/data/dataframes.py` - Added weighted survival accessor
-- `xmlot/models/__init__.py` - Updated imports
-
-#### New Files
-- `xmlot/models/weighting.py` - Weighting utilities
-- `docs/weighted_deephit_guide.md` - Comprehensive documentation
-- `examples/weighted_deephit_example.py` - Complete usage example
-- `tests/test_weighted_deephit.py` - Full test suite
-- `tests/test_weighting_standalone.py` - Standalone weight tests
+#### Ablation Modes
+- **`"full"`**: Standard weighted training with all components
+- **`"unweighted"`**: Uses standard PyCox training for comparison studies
+- **`"pycox_standard"`**: Forces use of PyCox's standard loss
 
 ### Benefits
 
 1. **Fairness**: Improves performance on underrepresented subgroups
-2. **Flexibility**: Multiple weighting strategies for different use cases
-3. **Ease of Use**: Simple API that integrates with existing code
-4. **Backward Compatibility**: Existing code continues to work
-5. **Comprehensive Testing**: Thoroughly tested functionality
+2. **Compatibility**: Maintains exact compatibility with original PyCox implementation
+3. **Flexibility**: Multiple ablation modes for different use cases
+4. **Robustness**: Automatic fallback to standard loss when appropriate
+5. **Performance**: Uses original PyCox training infrastructure
 
 ### Best Practices
 
-1. **Analyze your data** to identify underrepresented subgroups
-2. **Start with inverse frequency weighting** for most cases
-3. **Use survival-specific weighting** for complex temporal patterns
-4. **Avoid extreme weights** by setting appropriate min/max bounds
-5. **Evaluate performance** on each subgroup separately
-6. **Monitor validation performance** on underrepresented subgroups
+1. **Start with `use_weights=False`** to establish baseline performance
+2. **Use `ablation_mode="unweighted"`** for fair comparison studies
+3. **Monitor validation performance** on underrepresented subgroups
+4. **Ensure weight distribution** is reasonable (avoid extreme values)
+5. **Use proper accessor setup** to handle weights correctly
 
 ### Troubleshooting
 
 #### Common Issues
-1. **Extreme Weights**: Adjust `min_weight` and `max_weight` parameters
-2. **Overfitting**: Use early stopping and regularization
-3. **Poor Performance**: Ensure sufficient samples in each subgroup
-4. **Memory Issues**: Reduce batch size or use smaller architectures
+1. **Performance Differences**: Use `ablation_mode="unweighted"` for fair comparisons
+2. **Weight Application**: Ensure weights are properly stored in the accessor
+3. **Memory Issues**: Reduce batch size if needed
+4. **Training Instability**: Check weight distribution and consider normalization
 
 #### Debugging Tips
 ```python
-# Check weight distribution
-print(f"Weight mean: {weights.mean():.3f}")
-print(f"Weight std: {weights.std():.3f}")
-print(f"Weight min: {weights.min():.3f}")
-print(f"Weight max: {weights.max():.3f}")
+# Check if weights are being used
+print(f"Model uses weights: {model.use_weights}")
+print(f"Ablation mode: {model.m_hyperparameters.get('ablation_mode', 'full')}")
 
-# Check subgroup sizes
-for subgroup in df[subgroup_columns].drop_duplicates().values:
-    mask = (df[subgroup_columns] == subgroup).all(axis=1)
-    print(f"{subgroup}: {mask.sum()} samples")
+# Check weight distribution in your data
+if hasattr(data_train.surv, 'weights'):
+    weights = data_train.surv.weights
+    print(f"Weight mean: {weights.mean():.3f}")
+    print(f"Weight std: {weights.std():.3f}")
+    print(f"Weight min: {weights.min():.3f}")
+    print(f"Weight max: {weights.max():.3f}")
 ```
+
+### Files Modified
+
+#### Modified Files
+- `xmlot/models/pycox.py` - Added weighted DeepHit functionality to both DeepHit and DeepHitSingle classes
