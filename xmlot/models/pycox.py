@@ -69,6 +69,56 @@ class PyCoxModel(FromTheShelfModel):
             w = None
         return x, y, w
 
+    def _create_indexed_dataloader(self, x, y, batch_size):
+        """
+        Create a custom data loader that tracks batch indices for proper weight mapping.
+        This enables accurate sample weighting by knowing which samples are in each batch.
+        """
+        import torch.utils.data as data
+        
+        class IndexedSurvivalDataset(data.Dataset):
+            """Dataset that returns (features, targets, index) tuples."""
+            def __init__(self, x, y):
+                self.x = torch.tensor(x, dtype=torch.float32)
+                self.y = (torch.tensor(y[0], dtype=torch.long), 
+                         torch.tensor(y[1], dtype=torch.long))
+                self.indices = torch.arange(len(x))
+            
+            def __len__(self):
+                return len(self.x)
+            
+            def __getitem__(self, idx):
+                return self.x[idx], self.y[0][idx], self.y[1][idx], self.indices[idx]
+        
+        class IndexedDataLoader:
+            """Custom data loader that yields batches with indices."""
+            def __init__(self, dataset, batch_size, shuffle=True):
+                self.dataset = dataset
+                self.batch_size = batch_size
+                self.shuffle = shuffle
+                self.sampler = data.RandomSampler(dataset) if shuffle else data.SequentialSampler(dataset)
+                self.batch_sampler = data.BatchSampler(self.sampler, batch_size, drop_last=False)
+            
+            def __iter__(self):
+                for batch_indices in self.batch_sampler:
+                    x_batch = torch.stack([self.dataset.x[i] for i in batch_indices])
+                    y_batch = (torch.stack([self.dataset.y[0][i] for i in batch_indices]),
+                              torch.stack([self.dataset.y[1][i] for i in batch_indices]))
+                    indices_batch = torch.stack([self.dataset.indices[i] for i in batch_indices])
+                    yield x_batch, y_batch, indices_batch
+            
+            def __len__(self):
+                return len(self.batch_sampler)
+        
+        # Create the indexed dataset and loader
+        dataset = IndexedSurvivalDataset(x, y)
+        loader = IndexedDataLoader(dataset, batch_size, shuffle=True)
+        
+        print(f"🔍 Created indexed data loader with {len(dataset)} samples")
+        print(f"🔍 Batch size: {batch_size}, Total batches: {len(loader)}")
+        
+        return loader
+
 # DEEPSURV #
 
 class DeepSurv(PyCoxModel):
@@ -424,56 +474,6 @@ class DeepHitSingle(PyCoxModel):
         x_ = _adapt_input_(x)
         return self.m_model.predict_surv_df(x_)
 
-    def _create_indexed_dataloader(self, x, y, batch_size):
-        """
-        Create a custom data loader that tracks batch indices for proper weight mapping.
-        This enables accurate sample weighting by knowing which samples are in each batch.
-        """
-        import torch.utils.data as data
-        
-        class IndexedSurvivalDataset(data.Dataset):
-            """Dataset that returns (features, targets, index) tuples."""
-            def __init__(self, x, y):
-                self.x = torch.tensor(x, dtype=torch.float32)
-                self.y = (torch.tensor(y[0], dtype=torch.long), 
-                         torch.tensor(y[1], dtype=torch.long))
-                self.indices = torch.arange(len(x))
-            
-            def __len__(self):
-                return len(self.x)
-            
-            def __getitem__(self, idx):
-                return self.x[idx], self.y[0][idx], self.y[1][idx], self.indices[idx]
-        
-        class IndexedDataLoader:
-            """Custom data loader that yields batches with indices."""
-            def __init__(self, dataset, batch_size, shuffle=True):
-                self.dataset = dataset
-                self.batch_size = batch_size
-                self.shuffle = shuffle
-                self.sampler = data.RandomSampler(dataset) if shuffle else data.SequentialSampler(dataset)
-                self.batch_sampler = data.BatchSampler(self.sampler, batch_size, drop_last=False)
-            
-            def __iter__(self):
-                for batch_indices in self.batch_sampler:
-                    x_batch = torch.stack([self.dataset.x[i] for i in batch_indices])
-                    y_batch = (torch.stack([self.dataset.y[0][i] for i in batch_indices]),
-                              torch.stack([self.dataset.y[1][i] for i in batch_indices]))
-                    indices_batch = torch.stack([self.dataset.indices[i] for i in batch_indices])
-                    yield x_batch, y_batch, indices_batch
-            
-            def __len__(self):
-                return len(self.batch_sampler)
-        
-        # Create the indexed dataset and loader
-        dataset = IndexedSurvivalDataset(x, y)
-        loader = IndexedDataLoader(dataset, batch_size, shuffle=True)
-        
-        print(f"🔍 Created indexed data loader with {len(dataset)} samples")
-        print(f"🔍 Batch size: {batch_size}, Total batches: {len(loader)}")
-        
-        return loader
-
 
 class CauseSpecificNet(torch.nn.Module):
     """Network structure similar to the DeepHit paper, but without the residual
@@ -809,56 +809,6 @@ class DeepHit(PyCoxModel):
         """Predict survival probabilities for DeepHit model (compatibility method)."""
         x_ = _adapt_input_(x)
         return self.m_model.predict_surv_df(x_)
-
-    def _create_indexed_dataloader(self, x, y, batch_size):
-        """
-        Create a custom data loader that tracks batch indices for proper weight mapping.
-        This enables accurate sample weighting by knowing which samples are in each batch.
-        """
-        import torch.utils.data as data
-        
-        class IndexedSurvivalDataset(data.Dataset):
-            """Dataset that returns (features, targets, index) tuples."""
-            def __init__(self, x, y):
-                self.x = torch.tensor(x, dtype=torch.float32)
-                self.y = (torch.tensor(y[0], dtype=torch.long), 
-                         torch.tensor(y[1], dtype=torch.long))
-                self.indices = torch.arange(len(x))
-            
-            def __len__(self):
-                return len(self.x)
-            
-            def __getitem__(self, idx):
-                return self.x[idx], self.y[0][idx], self.y[1][idx], self.indices[idx]
-        
-        class IndexedDataLoader:
-            """Custom data loader that yields batches with indices."""
-            def __init__(self, dataset, batch_size, shuffle=True):
-                self.dataset = dataset
-                self.batch_size = batch_size
-                self.shuffle = shuffle
-                self.sampler = data.RandomSampler(dataset) if shuffle else data.SequentialSampler(dataset)
-                self.batch_sampler = data.BatchSampler(self.sampler, batch_size, drop_last=False)
-            
-            def __iter__(self):
-                for batch_indices in self.batch_sampler:
-                    x_batch = torch.stack([self.dataset.x[i] for i in batch_indices])
-                    y_batch = (torch.stack([self.dataset.y[0][i] for i in batch_indices]),
-                              torch.stack([self.dataset.y[1][i] for i in batch_indices]))
-                    indices_batch = torch.stack([self.dataset.indices[i] for i in batch_indices])
-                    yield x_batch, y_batch, indices_batch
-            
-            def __len__(self):
-                return len(self.batch_sampler)
-        
-        # Create the indexed dataset and loader
-        dataset = IndexedSurvivalDataset(x, y)
-        loader = IndexedDataLoader(dataset, batch_size, shuffle=True)
-        
-        print(f"🔍 Created indexed data loader with {len(dataset)} samples")
-        print(f"🔍 Batch size: {batch_size}, Total batches: {len(loader)}")
-        
-        return loader
 
     def set_ablation_mode(self, mode):
         """
