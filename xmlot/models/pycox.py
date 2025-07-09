@@ -566,7 +566,8 @@ class DeepHit(PyCoxModel):
                 self.m_net,
                 tt.optim.AdamWR(
                     lr=0.01,
-                    decoupled_weight_decay=0.01
+                    decoupled_weight_decay=0.01,
+                    cycle_eta_multiplier=0.8
                 ),
                 alpha=hyperparameters["alpha"],
                 sigma=hyperparameters["sigma"],
@@ -585,7 +586,8 @@ class DeepHit(PyCoxModel):
                 self.m_net,
                 tt.optim.AdamWR(
                     lr=0.01,
-                    decoupled_weight_decay=0.01
+                    decoupled_weight_decay=0.01,
+                    cycle_eta_multiplier=0.8
                 ),
                 alpha=hyperparameters["alpha"],  # 0.2,
                 sigma=hyperparameters["sigma"],  # 0.1,
@@ -650,9 +652,6 @@ class DeepHit(PyCoxModel):
                             # Fallback: use uniform weights if not enough stored weights
                             batch_weights = torch.ones(batch_size, dtype=torch.float32, device=pred.device)
                     
-                    # Check if all weights are 1.0 - if so, use standard loss directly
-                    if torch.allclose(batch_weights, torch.ones_like(batch_weights), atol=1e-6):
-                        return self._call_standard_loss_safely(pred, durations, events, rank_mat)
                     
                     # Implement weighted loss by extending PyCox's standard loss
                     return self._compute_weighted_loss(pred, durations, events, rank_mat, batch_weights)
@@ -710,9 +709,6 @@ class DeepHit(PyCoxModel):
                 # Get standard PyCox loss
                 standard_loss = self.standard_loss(pred, durations, events, rank_mat)
                 
-                # For uniform weights (all 1.0), return standard loss directly without any scaling
-                if torch.allclose(batch_weights, torch.ones_like(batch_weights), atol=1e-6):
-                    return standard_loss
                 
                 # For non-uniform weights, implement proper weighting
                 # Note: This is a simplified approach - you may want to implement more sophisticated weighting
@@ -822,18 +818,6 @@ class DeepHit(PyCoxModel):
         """Return the underlying PyCox model for evaluation."""
         return self.m_model
 
-    def interpolate(self, interpolation=10):
-        """Add interpolate method for evaluation compatibility."""
-        # Create a wrapper that provides the interpolate method
-        class InterpolatedModel:
-            def __init__(self, base_model):
-                self.base_model = base_model
-                
-            def predict_surv_df(self, x):
-                return self.base_model.predict_surv_df(x)
-        
-        return InterpolatedModel(self)
-
     def predict_surv(self, x, parameters=None):
         """Predict survival probabilities for DeepHit model (compatibility method)."""
         x_ = _adapt_input_(x)
@@ -888,55 +872,6 @@ class DeepHit(PyCoxModel):
         print(f"🔍 Batch size: {batch_size}, Total batches: {len(loader)}")
         
         return loader
-
-    def _analyze_feature_changes(self, data_train, fold_info=""):
-        """
-        Analyze potential causes of feature count changes between folds.
-        """
-        print(f"\n=== Feature Analysis {fold_info} ===")
-        
-        accessor = getattr(data_train, self.accessor_code)
-        features_df = accessor.features
-        
-        print(f"Total features: {features_df.shape[1]}")
-        print(f"Feature names: {list(features_df.columns)}")
-        
-        # Check for categorical features that might be encoded differently
-        categorical_features = []
-        for col in features_df.columns:
-            if features_df[col].dtype == 'object' or features_df[col].nunique() < 10:
-                categorical_features.append(col)
-        
-        if categorical_features:
-            print(f"Categorical features: {categorical_features}")
-            for col in categorical_features:
-                unique_vals = features_df[col].unique()
-                print(f"  {col}: {len(unique_vals)} unique values - {unique_vals}")
-        
-        # Check for missing values
-        missing_counts = features_df.isnull().sum()
-        if missing_counts.sum() > 0:
-            print("Features with missing values:")
-            for col, count in missing_counts[missing_counts > 0].items():
-                print(f"  {col}: {count} missing")
-        
-        # Check for constant features
-        constant_features = []
-        for col in features_df.columns:
-            if features_df[col].nunique() == 1:
-                constant_features.append(col)
-        
-        if constant_features:
-            print(f"Constant features: {constant_features}")
-        
-        print("=" * 50)
-        
-        return {
-            'total_features': features_df.shape[1],
-            'categorical_features': categorical_features,
-            'missing_features': missing_counts[missing_counts > 0].index.tolist(),
-            'constant_features': constant_features
-        }
 
     def set_ablation_mode(self, mode):
         """
