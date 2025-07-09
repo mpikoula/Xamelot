@@ -49,7 +49,8 @@ This implementation extends the DeepHit model in the PyCox module to support sam
 #### Ablation Modes
 - `"full"`: Use weighted training with all loss components
 - `"unweighted"`: Use standard PyCox training despite weights (for comparison)
-- `"pycox_standard"`: Use PyCox's standard loss even with weights
+
+The next step is to implement weighting on the individual components (likelyhood and rank loss)
 
 ### Quick Usage Example
 

@@ -220,7 +220,7 @@ class DeepHitSingle(PyCoxModel):
         out_features = hyperparameters["out_features"]
         batch_norm = hyperparameters["batch_norm"]  # True
         dropout = hyperparameters["dropout"]  # 0.1
-        seed = hyperparameters.get("seed")
+        seed = hyperparameters["seed"]
         self.use_weights = hyperparameters.get("use_weights", False)  # Default to False for backward compatibility
 
         if seed is not None:
@@ -240,7 +240,7 @@ class DeepHitSingle(PyCoxModel):
             ablation_mode = hyperparameters.get("ablation_mode", "full")
             print(f"🔍 DeepHitSingle: use_weights=True, ablation_mode={ablation_mode}")
             
-            if ablation_mode != "pycox_standard":
+            if ablation_mode != "unweighted":
                 # Create custom loss function for weighted mode
                 print("🔍 Creating custom loss function for weighted DeepHitSingle...")
                 self._create_weighted_loss_function(hyperparameters["alpha"], hyperparameters["sigma"])
@@ -365,10 +365,6 @@ class DeepHitSingle(PyCoxModel):
                 
                 # Get standard PyCox loss
                 standard_loss = self.standard_loss(pred, durations, events, rank_mat)
-                
-                # For uniform weights (all 1.0), return standard loss directly without any scaling
-                if torch.allclose(batch_weights, torch.ones_like(batch_weights), atol=1e-6):
-                    return standard_loss
                 
                 # For non-uniform weights, implement proper weighting
                 # Note: This is a simplified approach - you may want to implement more sophisticated weighting
@@ -528,7 +524,7 @@ class DeepHit(PyCoxModel):
         out_features     = hyperparameters["out_features"]      # len(labtrans.cuts)
         batch_norm       = hyperparameters["batch_norm"]        # True
         dropout          = hyperparameters["dropout"]           # 0.1
-        seed             = hyperparameters.get("seed")
+        seed             = hyperparameters["seed"]
         self.use_weights = hyperparameters.get("use_weights", False)  # Default to False for backward compatibility
 
         if seed is not None:
@@ -563,7 +559,7 @@ class DeepHit(PyCoxModel):
             
             # Create custom loss function for weighted mode
             ablation_mode = hyperparameters.get("ablation_mode", "full")
-            if ablation_mode != "pycox_standard":
+            if ablation_mode != "unweighted":
                 print("🔍 Creating custom loss function for weighted competing risks DeepHit...")
                 self._create_weighted_loss_function(hyperparameters["alpha"], hyperparameters["sigma"])
         else:
@@ -638,6 +634,7 @@ class DeepHit(PyCoxModel):
                         else:
                             # Fallback: use uniform weights if not enough stored weights
                             batch_weights = torch.ones(batch_size, dtype=torch.float32, device=pred.device)
+                            print("🔍 Fallback to uniform weights")
                     
                     
                     # Implement weighted loss by extending PyCox's standard loss
@@ -818,18 +815,11 @@ class DeepHit(PyCoxModel):
             mode (str): One of the following modes:
                 - "unweighted": Use standard PyCox training (no weights)
                 - "full": Use weighted training with all loss components
-                - "no_ranking": Use weighted training without ranking loss
-                - "no_likelihood": Use weighted training without likelihood loss
-                - "pycox_standard": Use PyCox's standard loss even with weights (for comparison)
-                - "weight_only": Use only weight scaling without custom loss components
                 - "ranking_only": Use only ranking loss component with weights
                 - "likelihood_only": Use only likelihood loss component with weights
-                - "adaptive": Use adaptive weighting based on loss gradients
         """
         valid_modes = [
-            "unweighted", "full", "no_ranking", "no_likelihood", 
-            "pycox_standard", "weight_only", "ranking_only", 
-            "likelihood_only", "adaptive"
+            "unweighted", "full", "ranking_only", "likelihood_only"
         ]
         if mode not in valid_modes:
             raise ValueError(f"Invalid ablation mode: {mode}. Must be one of {valid_modes}")
