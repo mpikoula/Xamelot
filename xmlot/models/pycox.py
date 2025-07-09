@@ -5,7 +5,6 @@
 
 import pandas as pd
 import numpy  as np
-from scipy.interpolate import interp1d
 
 import pycox.models as pycox
 import torch
@@ -419,18 +418,6 @@ class DeepHitSingle(PyCoxModel):
         """
         x_ = _adapt_input_(x)
         return self.m_model.predict_surv_df(x_)
-
-    def interpolate(self, interpolation=10):
-        """Add interpolate method for evaluation compatibility."""
-        # Create a wrapper that provides the interpolate method
-        class InterpolatedModel:
-            def __init__(self, base_model):
-                self.base_model = base_model
-                
-            def predict_surv_df(self, x):
-                return self.base_model.predict_surv_df(x)
-        
-        return InterpolatedModel(self)
 
     def predict_surv(self, x, parameters=None):
         """Predict survival probabilities for DeepHitSingle model (compatibility method)."""
