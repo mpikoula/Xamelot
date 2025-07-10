@@ -459,14 +459,28 @@ class DeepHitSingle(PyCoxModel):
 
     def predict(self, x, parameters=None):
         """
-        Return survival probabilities for DeepHitSingle model.
-        DeepHitSingle is for single risk scenarios, so it returns survival probabilities.
+        Return CIF predictions for consistency with DeepHit interface.
+        For DeepHitSingle, this converts survival probabilities to CIF.
         """
         x_ = _adapt_input_(x)
-        return self.m_model.predict_surv_df(x_)
+        surv = self.m_model.predict_surv(x_)
+        # Convert survival to CIF: CIF(t) = 1 - S(t)
+        cif = 1 - surv
+        return cif.T
+
+    def predict_CIF(self, x, parameters=None):
+        """
+        Return CIF predictions for compatibility with DeepHit interface.
+        For DeepHitSingle, this converts survival probabilities to CIF.
+        """
+        x_ = _adapt_input_(x)
+        surv = self.m_model.predict_surv(x_)
+        # Convert survival to CIF: CIF(t) = 1 - S(t)
+        cif = 1 - surv
+        return cif
 
     def predict_surv(self, x, parameters=None):
-        """Predict survival probabilities for DeepHitSingle model (compatibility method)."""
+        """Predict survival probabilities for DeepHitSingle model."""
         x_ = _adapt_input_(x)
         return self.m_model.predict_surv_df(x_)
 
@@ -785,135 +799,20 @@ class DeepHit(PyCoxModel):
 
         return self
 
-    def predict(self, x, parameters=None):
-        """
-        Return CIF predictions like the original DeepHit class.
-        The original DeepHit simply returned self.predict_CIF(x, parameters=None).
-        """
-        return self.predict_CIF(x, parameters)
-
     def predict_CIF(self, x, parameters=None):
         _ = parameters
         x_ = _adapt_input_(x)
         return self.model.predict_cif(x_)
-
-    @property
-    def model(self):
-        """Return the underlying PyCox model for evaluation."""
-        return self.m_model
+    
+    def predict_pmf(self, x, parameters=None):
+        _ = parameters
+        x_ = _adapt_input_(x)
+        return self.model.predict_pmf(x_)
 
     def predict_surv(self, x, parameters=None):
-        """Predict survival probabilities for DeepHit model (compatibility method)."""
+        _ = parameters
         x_ = _adapt_input_(x)
-        return self.m_model.predict_surv_df(x_)
-
-    def set_ablation_mode(self, mode):
-        """
-        Set the ablation mode for training.
-        
-        Args:
-            mode (str): One of the following modes:
-                - "unweighted": Use standard PyCox training (no weights)
-                - "full": Use weighted training with all loss components
-                - "ranking_only": Use only ranking loss component with weights
-                - "likelihood_only": Use only likelihood loss component with weights
-        """
-        valid_modes = [
-            "unweighted", "full", "ranking_only", "likelihood_only"
-        ]
-        if mode not in valid_modes:
-            raise ValueError(f"Invalid ablation mode: {mode}. Must be one of {valid_modes}")
-        
-        self.m_hyperparameters["ablation_mode"] = mode
-        print(f"🔧 Set ablation mode to: {mode}")
-        
-        # Recreate model with new ablation mode if weights are enabled
-        if self.use_weights:
-            self._create_weighted_loss_function(
-                self.m_hyperparameters["alpha"], 
-                self.m_hyperparameters["sigma"]
-            )
-
-    def get_model_info(self) -> dict:
-        """
-        Get comprehensive information about the model.
-        
-        Returns:
-            Dictionary containing model information
-        """
-        info = {
-            'model_type': 'DeepHit',
-            'accessor_code': self.accessor_code,
-            'use_weights': self.use_weights,
-            'hyperparameters': self.m_hyperparameters.copy(),
-            'architecture': {
-                'network_type': type(self.m_net).__name__ if hasattr(self, 'm_net') else 'None',
-                'model_type': type(self.m_model).__name__ if hasattr(self, 'm_model') else 'None',
-            },
-            'training': {
-                'has_training_log': self.m_log is not None,
-                'training_completed': hasattr(self, 'm_model') and self.m_model is not None
-            }
-        }
-        
-        # Add network architecture details
-        if hasattr(self, 'm_net') and self.m_net is not None:
-            info['architecture']['network_parameters'] = sum(
-                p.numel() for p in self.m_net.parameters()
-            )
-        
-        # Add ablation mode if available
-        if 'ablation_mode' in self.m_hyperparameters:
-            info['ablation_mode'] = self.m_hyperparameters['ablation_mode']
-        
-        return info
+        return self.model.predict_surv_df(x_)
     
-    def validate_model(self) -> dict:
-        """
-        Validate the model for potential issues.
-        
-        Returns:
-            Dictionary containing validation results
-        """
-        validation_results = {
-            'is_valid': True,
-            'warnings': [],
-            'errors': [],
-            'recommendations': []
-        }
-        
-        # Check if model is trained
-        if not hasattr(self, 'm_model') or self.m_model is None:
-            validation_results['is_valid'] = False
-            validation_results['errors'].append("Model is not trained")
-            return validation_results
-        
-        # Check network architecture
-        if not hasattr(self, 'm_net') or self.m_net is None:
-            validation_results['is_valid'] = False
-            validation_results['errors'].append("Network architecture is missing")
-            return validation_results
-        
-        # Check hyperparameters
-        required_params = ['in_features', 'num_nodes_shared', 'num_nodes_indiv', 'out_features']
-        for param in required_params:
-            if param not in self.m_hyperparameters:
-                validation_results['warnings'].append(f"Missing hyperparameter: {param}")
-        
-        # Check for potential issues
-        if self.use_weights and 'ablation_mode' not in self.m_hyperparameters:
-            validation_results['warnings'].append("Weighted mode without ablation mode specified")
-        
-        # Check network parameters
-        try:
-            param_count = sum(p.numel() for p in self.m_net.parameters())
-            if param_count > 1000000:  # 1M parameters
-                validation_results['recommendations'].append("Large model detected - consider model compression")
-        except Exception as e:
-            validation_results['warnings'].append(f"Could not count parameters: {e}")
-        
-        # Check training log
-        if self.m_log is None:
-            validation_results['warnings'].append("No training log available")
-        
-        return validation_results
+    def predict(self, x, parameters=None):
+        return self.predict_CIF(x, parameters=None)
