@@ -65,17 +65,9 @@ def _deepsurv_score_(model, df_test):
 def _deephit_score_(model, df_test):
     a_test  = getattr(df_test, model.accessor_code)
     interpolation = 10
-    
-    # Handle both standard and weighted DeepHit models
-    try:
-        # Try standard PyCox DeepHit approach
-        surv = model.model.interpolate(interpolation).predict_surv_df(
-            a_test.features.to_numpy()
-        )
-    except AttributeError:
-        # Fallback for weighted DeepHit models
-        surv = model.predict_surv(a_test.features.to_numpy())
-    
+    surv = model.model.interpolate(interpolation).predict_surv_df(
+        a_test.features.to_numpy()
+    )
     ev = EvalSurv(
         surv,
         a_test.durations.to_numpy(),
