@@ -191,6 +191,168 @@ def build_weighted_survival_accessor(event, duration, weight_column="sample_weig
     return WeightedSurvivalAccessor
 
 
+def build_fairness_survival_accessor(event, duration, group_indicator_column, accessor_code="surv", exceptions=tuple(), disable_warning=True, exclude_group_from_features=True):    
+    """
+    Build a fairness-aware survival accessor with group indicators.
+    
+    This replaces the weighted accessor approach with group indicators for fairness training.
+    
+    Args:
+        event: Column name for event indicators (0=censored, 1+=event type)
+        duration: Column name for duration/times
+        group_indicator_column: Column name for group membership (e.g., 'race')
+        accessor_code: Name for the accessor (e.g., 'surv')
+        exceptions: List of columns to exclude from features
+        disable_warning: Remove warnings linked to several uses of that function
+    
+    Example:
+        build_fairness_survival_accessor(
+            event="pcens",
+            duration="psurv", 
+            group_indicator_column="race",
+            accessor_code="surv",
+            exceptions=["age", "sex"]
+        )
+        
+        # Usage:
+        # df.surv.features  # Feature columns
+        # df.surv.durations  # Duration values
+        # df.surv.events  # Event indicators
+        # df.surv.group_indicators  # Group indicators (0=non-Black, 1=Black)
+    """
+    context_manager = catch_warnings() if disable_warning else nullcontext()
+    with context_manager:
+        if disable_warning:
+            simplefilter("ignore")
+
+        @pd.api.extensions.register_dataframe_accessor(accessor_code)
+        class FairnessSurvivalAccessor:
+            def __init__(self, pandas_obj):
+                self._validate(pandas_obj)
+                self._obj = pandas_obj
+
+                self.m_event = event
+                self.m_duration = duration
+                self.m_group_column = group_indicator_column
+                self.m_stratification = event
+                self.m_exceptions = exceptions
+                self.m_exclude_group_from_features = exclude_group_from_features
+
+            @staticmethod
+            def _validate(obj):
+                pass
+
+            @property
+            def event(self):
+                return self.m_event
+
+            @property
+            def events(self):
+                return self._obj[self.event]
+
+            @property
+            def duration(self):
+                return self.m_duration
+
+            @property
+            def durations(self):
+                return self._obj[self.duration]
+
+            @property
+            def weights(self):
+                """Return None for fairness training"""
+                return None
+
+            @property
+            def group_indicators(self):
+                """
+                Get group indicators for fairness training.
+                
+                Returns:
+                    Binary indicators where 0 = group1 (e.g., non-Black), 1 = group2 (e.g., Black)
+                """
+                # Convert group column to binary indicators
+                # Assuming 'Black' is the minority group (group 1)
+                # You can modify this mapping based on your data
+                
+                group_values = self._obj[self.m_group_column]
+                
+                # Handle different possible formats
+                if group_values.dtype == 'object' or group_values.dtype == 'string':
+                    # String/object column - map 'Black' to 1, others to 0
+                    return (group_values == 'Black').astype(int)
+                elif group_values.dtype in ['int64', 'int32', 'float64', 'float32']:
+                    # Numeric column - assume 1 is Black, 0 is non-Black
+                    return (group_values == 1).astype(int)
+                else:
+                    # Fallback - try to detect Black values
+                    black_values = ['Black', 'black', 'BLACK', 'B', 'b', 1, 1.0]
+                    return group_values.isin(black_values).astype(int)
+
+            @property
+            def target(self):
+                return [self.event, self.duration]
+
+            @property
+            def targets(self):
+                return self._obj[self.target]
+
+            @property
+            def features_list(self):
+                # Exclude group column from features if requested
+                base_exclusions = union(self.target, self.m_exceptions)
+                if self.m_exclude_group_from_features:
+                    base_exclusions = union(base_exclusions, [self.m_group_column])
+                return difference(self._obj.columns, base_exclusions)
+
+            @property
+            def features(self):
+                return self._obj[self.features_list]
+
+            @property
+            def stratification_target(self):
+                return self.m_stratification
+
+            @property
+            def df(self):
+            # Exclude group column from df if requested, just like features
+                base_exclusions = self.m_exceptions
+                if self.m_exclude_group_from_features:
+                    base_exclusions = union(base_exclusions, [self.m_group_column])
+                return self._obj.drop(columns=base_exclusions, errors="ignore")
+
+            def get_group_distribution(self):
+                """Get distribution of groups for debugging."""
+                group_indicators = self.group_indicators
+                total = len(group_indicators)
+                group0_count = (group_indicators == 0).sum()
+                group1_count = (group_indicators == 1).sum()
+                
+                return {
+                    'total_samples': total,
+                    'group0_count': group0_count,
+                    'group1_count': group1_count,
+                    'group0_percentage': (group0_count / total) * 100,
+                    'group1_percentage': (group1_count / total) * 100
+                }
+
+            def print_group_info(self):
+                """Print group distribution information."""
+                dist = self.get_group_distribution()
+                print(f"📊 Group Distribution:")
+                print(f"   Total samples: {dist['total_samples']}")
+                print(f"   Group 0 (non-Black): {dist['group0_count']} ({dist['group0_percentage']:.1f}%)")
+                print(f"   Group 1 (Black): {dist['group1_count']} ({dist['group1_percentage']:.1f}%)")
+                
+                # Show original group column values
+                unique_values = self._obj[self.m_group_column].value_counts()
+                print(f"   Original '{self.m_group_column}' values:")
+                for value, count in unique_values.items():
+                    print(f"     '{value}': {count} samples")
+
+    return FairnessSurvivalAccessor
+
+
 def build_classification_accessor(target, accessor_code="class", exceptions=(), disable_warning=True):
     """
     Build an accessor dedicated to the management of data for classification.
@@ -397,3 +559,4 @@ def get_constant_columns(df):
 
 def get_sparse_columns(df, threshold):
     return [column for column in df.columns if density(df, column) < threshold]
+# TEST COMMENT

@@ -93,7 +93,159 @@ model = DeepHit(
 model.fit(data_train, train_params)
 ```
 
-### Files Modified
+## Fairness-Aware DeepHit Implementation
 
-#### Modified Files
-- `xmlot/models/pycox.py` - Added weighted DeepHit functionality to both DeepHit and DeepHitSingle classes
+This module extends PyCox's DeepHit models with fairness-aware loss functions that penalize differences in mean risk between demographic subgroups.
+
+## Overview
+
+The fairness loss function implements a squared-difference penalty on mean risk between groups:
+
+```
+Loss = α·NLL + (1-α)·ranking_loss + fairness_weight·[(μ_group1 - μ_group2)²]
+```
+
+where:
+- `α·NLL + (1-α)·ranking_loss` is the standard DeepHit loss
+- `fairness_weight` controls the strength of the fairness penalty
+- `μ_group1` and `μ_group2` are the mean risks for different demographic subgroups
+
+## Key Features
+
+- **Direct Fairness Penalty**: Penalizes differences in mean risk between groups
+- **Flexible Group Definition**: Works with any binary group indicator (race, gender, age group, etc.)
+- **Configurable Strength**: Adjust `fairness_weight` to control penalty strength
+- **Backward Compatible**: Standard DeepHit still works without changes
+- **Comprehensive Monitoring**: Tracks loss components and group risk differences
+- **Visualization**: Built-in plotting of fairness metrics during training
+
+## Usage
+
+### Basic Fairness Training
+
+```python
+from xmlot.models.pycox import DeepHitSingle
+
+# Create fairness-aware model
+model = DeepHitSingle(
+    accessor_code="surv",
+    hyperparameters={
+        "in_features": 10,
+        "num_nodes": [32, 32],
+        "out_features": 50,
+        "batch_norm": True,
+        "dropout": 0.1,
+        "alpha": 0.2,
+        "sigma": 0.1,
+        "seed": 42,
+        "use_fairness": True,  # Enable fairness mode
+        "fairness_weight": 0.1  # Control penalty strength
+    }
+)
+
+# Train with group indicators
+model.fit(train_data, train_params)
+```
+
+### Data Requirements
+
+Your data accessor must include `group_indicators`:
+
+```python
+class MyAccessor:
+    @property
+    def features(self):
+        return self.df[feature_columns]
+    
+    @property
+    def durations(self):
+        return self.df['duration']
+    
+    @property
+    def events(self):
+        return self.df['event']
+    
+    @property
+    def group_indicators(self):  # Required for fairness
+        # 0 = group1, 1 = group2
+        return self.df['race'].map({'White': 0, 'Black': 1})
+```
+
+### Hyperparameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `use_fairness` | bool | False | Enable fairness-aware training |
+| `fairness_weight` | float | 0.1 | Strength of fairness penalty |
+| `alpha` | float | 0.2 | Weight for NLL vs ranking loss |
+| `sigma` | float | 0.1 | Temperature for ranking loss |
+
+### Monitoring Training
+
+```python
+# Get loss history
+loss_history = model.get_loss_history()
+
+# Plot fairness components
+model.plot_loss_components(save_path="fairness_plot.png")
+
+# Access specific metrics
+print(f"Final fairness penalty: {loss_history['fairness_loss'][-1]:.4f}")
+print(f"Group 1 mean risk: {loss_history['group1_mean_risk'][-1]:.4f}")
+print(f"Group 2 mean risk: {loss_history['group2_mean_risk'][-1]:.4f}")
+```
+
+## Example: Black vs Non-Black Patients
+
+```python
+# Create group indicators for Black vs non-Black patients
+def create_race_indicators(df):
+    # 0 = non-Black, 1 = Black
+    return (df['ethnicity'] == 'Black').astype(int)
+
+# Train fairness-aware model
+model = DeepHitSingle(
+    accessor_code="surv",
+    hyperparameters={
+        # ... other parameters ...
+        "use_fairness": True,
+        "fairness_weight": 0.2  # Stronger penalty ethnic minority group
+    }
+)
+
+# The model will learn to reduce differences in mean risk between Black and non-Black patients
+```
+
+## Comparison with Sample Weighting
+
+| Approach | Pros | Cons |
+|----------|------|------|
+| **Sample Weighting** | Simple implementation, preserves ranking loss | May not directly address risk differences |
+| **Fairness Penalty** | Directly penalizes risk differences, principled approach | Requires tuning fairness_weight, may impact overall performance |
+
+## Implementation Details
+
+### Loss Function
+
+The fairness penalty is computed as:
+
+1. **Risk Calculation**: `risk = sum(PMF[event_times])` for each sample
+2. **Group Means**: `μ_group1 = mean(risk[group1])`, `μ_group2 = mean(risk[group2])`
+3. **Penalty**: `fairness_loss = (μ_group1 - μ_group2)²`
+
+### Gradient Flow
+
+The fairness penalty affects gradients through:
+- Direct impact on total loss
+- Backpropagation through risk calculation
+- Influence on PMF computation via softmax
+
+### Numerical Stability
+
+- Uses epsilon (1e-8) to prevent division by zero
+- Clamps risk values to prevent extreme gradients
+- Handles edge cases with empty groups
+
+
+
+
